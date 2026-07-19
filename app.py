@@ -16,6 +16,47 @@ APP_DIR = Path(__file__).parent
 HISTORY_DIR = APP_DIR / "gecmis_raporlar"
 HISTORY_DIR.mkdir(exist_ok=True)
 
+
+APP_NAME = "YR Logistics Dashboard"
+APP_VERSION = "1.1.0"
+
+
+def get_secret(name, default=""):
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
+
+
+def show_app_header(subtitle):
+    logo_path = APP_DIR / "logo.png"
+    if logo_path.exists():
+        logo_col, title_col = st.columns([1, 8])
+        with logo_col:
+            st.image(str(logo_path), width=90)
+        with title_col:
+            st.title(APP_NAME)
+            st.caption(subtitle)
+    else:
+        st.title(APP_NAME)
+        st.caption(subtitle)
+
+
+def iso_week_label(value):
+    """Tarihi ISO hafta formatında (örn. 2026-W29) döndürür."""
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    iso = ts.isocalendar()
+    return f"{int(iso.year)}-W{int(iso.week):02d}"
+
+
+def filter_report_names(report_names, query):
+    query = str(query or "").strip().lower()
+    if not query:
+        return report_names
+    return [name for name in report_names if query in name.lower()]
+
 def _github_report_settings():
     """
     Streamlit Secrets varsa GitHub reports klasörünü kullanır.
@@ -60,7 +101,8 @@ def list_saved_reports():
     if response.status_code == 404:
         return []
 
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(f"GitHub rapor listesi okunamadı: {response.status_code} - {response.text[:200]}")
 
     reports = [
         item["name"]
@@ -87,7 +129,8 @@ def load_saved_report(filename):
         params={"ref": branch},
         timeout=30,
     )
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(f"GitHub raporu açılamadı: {response.status_code} - {response.text[:200]}")
 
     return base64.b64decode(response.json()["content"])
 
@@ -154,7 +197,8 @@ def save_report_permanently(filename, report_bytes):
         json=payload,
         timeout=60,
     )
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(f"GitHub rapor kaydı başarısız: {response.status_code} - {response.text[:300]}")
 
     return candidate
 
@@ -165,16 +209,18 @@ if "role" not in st.session_state:
     st.session_state["role"] = None
 
 if st.session_state["role"] is None:
-    st.title("YR Logistics Dashboard")
-    st.caption("Giriş için şifrenizi yazın.")
+    show_app_header("Giriş için şifrenizi yazın.")
 
     password = st.text_input("Şifre", type="password")
 
-    if st.button("Giriş Yap"):
-        if password.strip().lower() == "tedarik":
+    if st.button("Giriş Yap", type="primary"):
+        tedarik_password = get_secret("TEDARIK_PASSWORD", "tedarik")
+        depo_password = get_secret("DEPO_PASSWORD", "depo")
+
+        if password == tedarik_password:
             st.session_state["role"] = "tedarik"
             st.rerun()
-        elif password.strip().lower() == "depo":
+        elif password == depo_password:
             st.session_state["role"] = "depo"
             st.rerun()
         else:
@@ -918,8 +964,7 @@ def format_excel_workbook(excel_bytes):
 # DEPO EKRANI
 # ------------------------------------------------------------
 if st.session_state["role"] == "depo":
-    st.title("YR Logistics Dashboard")
-    st.caption("Depo operasyon ekranı")
+    show_app_header("Depo operasyon ekranı")
 
     if st.sidebar.button("Çıkış Yap"):
         st.session_state["role"] = None
@@ -931,9 +976,16 @@ if st.session_state["role"] == "depo":
         st.warning("Henüz kayıtlı rapor yok. Rapor önce tedarik ekranından kaydedilmelidir.")
         st.stop()
 
+    report_search = st.text_input("Rapor ara", placeholder="Örn. W29, Final, Rev2")
+    filtered_history_files = filter_report_names(history_files, report_search)
+
+    if not filtered_history_files:
+        st.warning("Aramanızla eşleşen rapor bulunamadı.")
+        st.stop()
+
     selected_history = st.selectbox(
         "Kayıtlı rapor seç",
-        options=history_files
+        options=filtered_history_files
     )
 
     selected_report_bytes = load_saved_report(selected_history)
@@ -981,7 +1033,7 @@ if st.session_state["role"] == "depo":
 
             if sheet_name == "Depo Haftalık Operasyon":
                 st.subheader("Haftalık Operasyon Tablosu")
-                st.caption("Haftalar kolonlarda; giriş, çıkış, stok seviyesi ve tır bilgisi satırlarda gösterilir.")
+                st.caption("Haftalar kolonlarda; giriş, çıkış ve stok seviyesi satırlarda gösterilir.")
                 df_display = df.copy()
 
             elif sheet_name == "Veri":
@@ -1023,6 +1075,22 @@ if st.session_state["role"] == "depo":
             else:
                 df_display = df.copy()
 
+            # Depo ekranında planning hesaplarını hiçbir şekilde gösterme.
+            forbidden_pattern = r"palet|kapasite|trend|tır|truck|düşülecek"
+
+            visible_columns = [
+                col for col in df_display.columns
+                if not re.search(forbidden_pattern, str(col), flags=re.IGNORECASE)
+            ]
+            if visible_columns:
+                df_display = df_display[visible_columns]
+
+            if len(df_display.index) > 0:
+                row_mask = pd.Series(df_display.index.astype(str), index=df_display.index).str.contains(
+                    forbidden_pattern, case=False, regex=True, na=False
+                )
+                df_display = df_display.loc[~row_mask]
+
             # Sayıları virgüllü ve ondalıksız göster
             df_display = df_display.copy()
             for col in df_display.columns:
@@ -1052,8 +1120,7 @@ if st.session_state.get("role") == "tedarik":
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.title("YR Logistics Dashboard")
-st.caption("Planning & Warehouse Operations · Dashboard 1.0")
+show_app_header("Planning & Warehouse Operations")
 
 st.markdown(
     """
@@ -1095,6 +1162,10 @@ with st.sidebar:
     depo_kapasitesi = st.number_input("Depo Maksimum Palet Kapasitesi", min_value=1.0, value=1100.0, step=100.0)
     takip_esigi = st.number_input("Takip Eşiği (%)", min_value=0.0, max_value=100.0, value=85.0, step=1.0)
     kritik_esigi = st.number_input("Kritik Eşiği (%)", min_value=0.0, max_value=100.0, value=99.0, step=1.0)
+
+    st.header("Rapor Bilgisi")
+    report_owner = st.text_input("Raporu Oluşturan", value="Özge")
+    report_note = st.text_area("Rapor Notu (Opsiyonel)", placeholder="Örn. Mega Sale devam ediyor.")
 
     st.header("Başlangıç Stok")
     initial_ana = st.number_input("Başlangıç Ana Ürün Stok", value=0, step=1000)
@@ -1298,6 +1369,8 @@ if calculate:
 
         weekly.columns = [f"{metric}_{rtype}" for metric, rtype in weekly.columns]
         weekly = weekly.reset_index()
+        weekly["week_start"] = pd.to_datetime(weekly["week_start"], errors="coerce")
+        weekly = weekly.sort_values("week_start").reset_index(drop=True)
 
         # Eksik kolonları oluştur
         needed_numeric_cols = [
@@ -1313,7 +1386,7 @@ if calculate:
         # Excel görünümüne yakın rapor
         report = pd.DataFrame()
         weekly["week_start"] = pd.to_datetime(weekly["week_start"].astype(str), errors="coerce")
-        report["Hafta"] = weekly["week_start"].dt.strftime("%Y-W%U")
+        report["Hafta"] = weekly["week_start"].apply(iso_week_label)
         report["Hafta Başlangıcı"] = weekly["week_start"].dt.strftime("%d.%m.%Y")
         report["Kampanya"] = weekly["week_start"].apply(lambda x: assign_campaign(x, campaign_df))
 
@@ -1389,6 +1462,10 @@ if calculate:
 
     with tab_dashboard:
         st.success("Rapor hazır.")
+        info1, info2, info3 = st.columns(3)
+        info1.info(f"Oluşturan: {report_owner or '-'}")
+        info2.info(f"Oluşturma: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+        info3.info(f"Not: {report_note or '-'}")
 
         # KPI'lar ilk haftanın değerlerini gösterir.
         first_total = weekly["Total Palet"].iloc[0]
@@ -1603,6 +1680,14 @@ if calculate:
     else:
         depo_yatay_operasyon = pd.DataFrame()
 
+    report_metadata = pd.DataFrame([{
+        "Rapor Adı": "YR Logistics Dashboard",
+        "Oluşturan": report_owner,
+        "Oluşturma Tarihi": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        "Rapor Notu": report_note,
+        "Uygulama Versiyonu": APP_VERSION,
+    }])
+
     # Excel export
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1615,6 +1700,7 @@ if calculate:
         pd.DataFrame([sheet_info]).to_excel(writer, sheet_name="Okunan Sheet Bilgisi", index=False)
         category_check.to_excel(writer, sheet_name="Kategori Kontrol", index=False)
         campaign_df.to_excel(writer, sheet_name="Kampanya", index=False)
+        report_metadata.to_excel(writer, sheet_name="Rapor Bilgisi", index=False)
 
         if ekol_file is not None:
             if ekol_capacity is not None:
@@ -1626,7 +1712,7 @@ if calculate:
     # Son oluşturulan raporu hafızada tut. Excel kaydında sayılar virgüllü görünür.
     formatted_report_bytes = format_excel_workbook(output.getvalue())
     st.session_state["last_report_bytes"] = formatted_report_bytes
-    st.session_state["last_report_default_name"] = f"depo_giris_cikis_raporu_{datetime.now().strftime('%Y%m%d')}"
+    st.session_state["last_report_default_name"] = f"YR_Logistics_{datetime.now().strftime('%Y%m%d')}"
 
     st.download_button(
         label="Excel Raporu İndir",
@@ -1649,7 +1735,7 @@ st.subheader("💾 Raporu Geçmişe Kaydet")
 if "last_report_bytes" in st.session_state:
     report_save_name = st.text_input(
         "Geçmişe kaydetme adı",
-        value=st.session_state.get("last_report_default_name", f"depo_giris_cikis_raporu_{datetime.now().strftime('%Y%m%d')}")
+        value=st.session_state.get("last_report_default_name", f"YR_Logistics_{datetime.now().strftime('%Y%m%d')}")
     )
 
     if st.button("Geçmişe Kaydet"):
@@ -1659,7 +1745,7 @@ if "last_report_bytes" in st.session_state:
         )
 
         if not clean_name:
-            clean_name = f"depo_giris_cikis_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            clean_name = f"YR_Logistics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         history_filename = f"{clean_name}.xlsx"
 
@@ -1683,9 +1769,16 @@ st.subheader("🗂️ Geçmiş Raporlar")
 history_files = list_saved_reports()
 
 if history_files:
+    history_search = st.text_input("Geçmiş raporlarda ara", placeholder="Örn. W29, Final, Rev2")
+    filtered_history_files = filter_report_names(history_files, history_search)
+
+    if not filtered_history_files:
+        st.warning("Aramanızla eşleşen geçmiş rapor bulunamadı.")
+        st.stop()
+
     selected_history = st.selectbox(
         "Geçmiş rapor seç",
-        options=history_files
+        options=filtered_history_files
     )
 
     selected_report_bytes = load_saved_report(selected_history)
@@ -1704,11 +1797,11 @@ if history_files:
         for tab, sheet_name in zip(tabs, xls_history.sheet_names):
             with tab:
                 old_df = pd.read_excel(BytesIO(selected_report_bytes), sheet_name=sheet_name)
-                st.dataframe(old_df, use_container_width=True)
+                st.dataframe(format_numeric_dataframe(old_df), use_container_width=True)
 
     st.caption(f"Toplam kayıtlı rapor sayısı: {len(history_files)}")
 else:
     st.info("Henüz geçmiş rapor yok. Raporu oluşturduktan sonra 'Geçmişe Kaydet' butonuna basarsan burada görünür.")
 
 
-st.sidebar.caption("YR Logistics Dashboard · v1.0.0")
+st.sidebar.caption(f"{APP_NAME} · v{APP_VERSION} · {st.session_state.get('role', '-').title()}")
