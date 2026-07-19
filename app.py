@@ -1053,7 +1053,22 @@ if st.session_state.get("role") == "tedarik":
 # UI
 # ------------------------------------------------------------
 st.title("YR Logistics Dashboard")
-st.caption("Tedarik ve depo kapasite planlama ekranı")
+st.caption("Planning & Warehouse Operations · Dashboard 1.0")
+
+st.markdown(
+    """
+    <div style="
+        padding: 12px 16px;
+        border: 1px solid #e6e8eb;
+        border-radius: 12px;
+        margin-bottom: 14px;
+        background: #fafbfc;">
+        Supply, APO, ürün tipi/kampanya ve Ekol dosyalarını yükleyerek
+        haftalık depo hareketlerini ve kapasite görünümünü oluşturun.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 st.write(
     "Supply girişlerini, APO çıkış forecastini ve ürün tipi dosyasını yükleyerek "
@@ -1362,187 +1377,201 @@ if calculate:
 
         weekly = report
 
-    st.success("Rapor hazır.")
 
-    # KPI'lar ilk haftanın değerlerini gösterir.
-    first_total = weekly["Total Palet"].iloc[0]
-    first_capacity = weekly["Kapasite Kullanım %"].iloc[0]
-    first_remaining = weekly["Kalan Kapasite Palet"].iloc[0]
-    first_status = weekly["Kapasite Durumu"].iloc[0]
-    first_week = weekly["Hafta"].iloc[0]
+    # Yeni sekmeli sonuç alanı
+    tab_dashboard, tab_weekly, tab_current, tab_monthly, tab_ekol = st.tabs([
+        "🏠 Dashboard",
+        "📅 Haftalık Özet",
+        "📦 Mevcut Hafta",
+        "📈 Aylık Giriş / Çıkış",
+        "🚚 Ekol",
+    ])
 
-    # Peak hafta sadece ilk 5 ay içinde aranır.
-    weekly_for_peak = weekly.copy()
-    weekly_for_peak["_date"] = pd.to_datetime(weekly_for_peak["Hafta Başlangıcı"], dayfirst=True, errors="coerce")
-    first_date = weekly_for_peak["_date"].min()
-    horizon_date = add_months(first_date, 5)
-    first_5_months = weekly_for_peak[weekly_for_peak["_date"] < horizon_date].copy()
+    with tab_dashboard:
+        st.success("Rapor hazır.")
 
-    if first_5_months.empty:
-        first_5_months = weekly_for_peak.copy()
+        # KPI'lar ilk haftanın değerlerini gösterir.
+        first_total = weekly["Total Palet"].iloc[0]
+        first_capacity = weekly["Kapasite Kullanım %"].iloc[0]
+        first_remaining = weekly["Kalan Kapasite Palet"].iloc[0]
+        first_status = weekly["Kapasite Durumu"].iloc[0]
+        first_week = weekly["Hafta"].iloc[0]
 
-    peak_idx = first_5_months["Total Palet"].idxmax()
-    peak_week = first_5_months.loc[peak_idx, "Hafta"]
-    peak_pallet = first_5_months.loc[peak_idx, "Total Palet"]
-    increasing_week_count = int((first_5_months["Palet Trend"] == "Artış").sum())
+        # Peak hafta sadece ilk 5 ay içinde aranır.
+        weekly_for_peak = weekly.copy()
+        weekly_for_peak["_date"] = pd.to_datetime(weekly_for_peak["Hafta Başlangıcı"], dayfirst=True, errors="coerce")
+        first_date = weekly_for_peak["_date"].min()
+        horizon_date = add_months(first_date, 5)
+        first_5_months = weekly_for_peak[weekly_for_peak["_date"] < horizon_date].copy()
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+        if first_5_months.empty:
+            first_5_months = weekly_for_peak.copy()
 
-    with c1:
-        st.metric("İlk Hafta Total Palet", f"{first_total:,.0f}", first_week)
-    with c2:
-        st.metric("İlk Hafta Kapasite %", f"{first_capacity:,.0f}%")
-    with c3:
-        st.metric("İlk Hafta Kalan Kapasite", f"{first_remaining:,.0f} palet")
-    with c4:
-        st.metric("Peak Hafta / İlk 5 Ay", f"{peak_week}", f"{peak_pallet:,.0f} palet")
-    with c5:
-        st.metric("Artan Hafta Sayısı / İlk 5 Ay", f"{increasing_week_count}")
+        peak_idx = first_5_months["Total Palet"].idxmax()
+        peak_week = first_5_months.loc[peak_idx, "Hafta"]
+        peak_pallet = first_5_months.loc[peak_idx, "Total Palet"]
+        increasing_week_count = int((first_5_months["Palet Trend"] == "Artış").sum())
 
-    if first_status in ["Kritik", "Kapasite Aşımı"]:
-        st.error(f"İlk hafta kapasite durumu: {first_status}")
-    elif first_status == "Takip":
-        st.warning(f"İlk hafta kapasite durumu: {first_status}")
-    else:
-        st.success(f"İlk hafta kapasite durumu: {first_status}")
+        c1, c2, c3, c4, c5 = st.columns(5)
 
-    st.subheader("Yatay Haftalık Görünüm / Excel Formatı")
+        with c1:
+            st.metric("İlk Hafta Total Palet", f"{first_total:,.0f}", first_week)
+        with c2:
+            st.metric("İlk Hafta Kapasite %", f"{first_capacity:,.0f}%")
+        with c3:
+            st.metric("İlk Hafta Kalan Kapasite", f"{first_remaining:,.0f} palet")
+        with c4:
+            st.metric("Peak Hafta / İlk 5 Ay", f"{peak_week}", f"{peak_pallet:,.0f} palet")
+        with c5:
+            st.metric("Artan Hafta Sayısı / İlk 5 Ay", f"{increasing_week_count}")
 
-    pivot_rows = [
-        "Ana Ürün Giriş",
-        "Ana Ürün Çıkış",
-        "Ana Ürün Ekol Stok Seviyesi",
-        "Ana Ürün Palet",
-
-        "Mini Sample Giriş",
-        "Mini Sample Çıkış",
-        "Mini Sample Ekol Stok Seviyesi",
-        "Mini Sample Palet",
-
-        "ADR Giriş",
-        "ADR Çıkış",
-        "ADR Ekol Stok Seviyesi",
-        "ADR Palet",
-
-        "Sarf Palet",
-        "ADR Düşülecek Palet",
-        "Total Palet",
-        "Kapasite Kullanım %",
-        "Kalan Kapasite Palet",
-        "Kapasite Durumu",
-        "Palet Trend",
-        "Tır Sayısı",
-    ]
-
-    horizontal = weekly.set_index("Hafta")[pivot_rows].T
-
-    weekly_date_map = weekly.set_index("Hafta")["Hafta Başlangıcı"]
-    campaign_row = weekly.set_index("Hafta")["Kampanya"]
-
-    horizontal.columns = [
-        f"{week}\n{weekly_date_map.loc[week]}\n{campaign_row.loc[week] if campaign_row.loc[week] else ''}"
-        for week in horizontal.columns
-    ]
-
-    # Total Palet önceki haftaya göre artıyorsa o haftayı kritik kırmızı yap.
-    weekly_sorted = weekly.copy()
-    weekly_sorted["Total Palet Artış"] = weekly_sorted["Total Palet"].diff()
-    increased_weeks = weekly_sorted.loc[
-        weekly_sorted["Total Palet Artış"] > 0, "Hafta"
-    ].astype(str).tolist()
-
-    # İlk 5 aydan sonraki haftaları kırmızı belirteçle işaretle.
-    weekly_horizon = weekly.copy()
-    weekly_horizon["_date"] = pd.to_datetime(weekly_horizon["Hafta Başlangıcı"], dayfirst=True, errors="coerce")
-    first_week_date = weekly_horizon["_date"].min()
-    horizon_limit = add_months(first_week_date, 5)
-    after_horizon_weeks = weekly_horizon.loc[
-        weekly_horizon["_date"] >= horizon_limit, "Hafta"
-    ].astype(str).tolist()
-
-    st.caption("Ekran performansı için tabloda ilk 5 ay gösterilir. Excel çıktısında tüm haftalar yer alır.")
-
-    display_cols = [
-        col for col in horizontal.columns
-        if str(col).split("\\n")[0] not in after_horizon_weeks
-    ]
-    horizontal_display = horizontal[display_cols] if display_cols else horizontal
-
-    st.dataframe(horizontal_display, use_container_width=True, height=520)
-
-    with st.expander("Okunan Kampanya Takvimi"):
-        if campaign_df.empty:
-            st.warning("Kampanya takvimi okunamadı. Kampanya sheetinde kampanya adı, start ve end tarihleri olduğundan emin olun.")
+        if first_status in ["Kritik", "Kapasite Aşımı"]:
+            st.error(f"İlk hafta kapasite durumu: {first_status}")
+        elif first_status == "Takip":
+            st.warning(f"İlk hafta kapasite durumu: {first_status}")
         else:
-            campaign_view = campaign_df.copy()
-            campaign_view["start"] = campaign_view["start"].dt.strftime("%d.%m.%Y")
-            campaign_view["end"] = campaign_view["end"].dt.strftime("%d.%m.%Y")
-            st.dataframe(campaign_view, use_container_width=True)
+            st.success(f"İlk hafta kapasite durumu: {first_status}")
 
-    st.subheader("Mevcut Hafta Palet Tablosu")
+    with tab_weekly:
+        st.subheader("Yatay Haftalık Görünüm / Excel Formatı")
 
-    mevcut_hafta_report = pd.DataFrame({
-        "Kategori": ["Ana Ürün", "Mini Sample", "ADR", "Sarf", "Total"],
-        "Başlangıç Stok": [initial_ana, initial_mini, initial_adr, np.nan, np.nan],
-        "Palet İçi": [ana_palet_ici, mini_palet_ici, adr_palet_ici, np.nan, np.nan],
-        "Mevcut Hafta Palet": [
-            mevcut_ana_palet,
-            mevcut_mini_palet,
-            mevcut_adr_palet,
-            sarf_palet,
-            mevcut_total_palet
+        pivot_rows = [
+            "Ana Ürün Giriş",
+            "Ana Ürün Çıkış",
+            "Ana Ürün Ekol Stok Seviyesi",
+            "Ana Ürün Palet",
+
+            "Mini Sample Giriş",
+            "Mini Sample Çıkış",
+            "Mini Sample Ekol Stok Seviyesi",
+            "Mini Sample Palet",
+
+            "ADR Giriş",
+            "ADR Çıkış",
+            "ADR Ekol Stok Seviyesi",
+            "ADR Palet",
+
+            "Sarf Palet",
+            "ADR Düşülecek Palet",
+            "Total Palet",
+            "Kapasite Kullanım %",
+            "Kalan Kapasite Palet",
+            "Kapasite Durumu",
+            "Palet Trend",
+            "Tır Sayısı",
         ]
-    })
 
-    for col in ["Başlangıç Stok", "Palet İçi", "Mevcut Hafta Palet"]:
-        mevcut_hafta_report[col] = pd.to_numeric(mevcut_hafta_report[col], errors="coerce").round(0)
+        horizontal = weekly.set_index("Hafta")[pivot_rows].T
 
-    st.dataframe(
-        mevcut_hafta_report.style.format({
-            "Başlangıç Stok": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
-            "Palet İçi": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
-            "Mevcut Hafta Palet": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
-        }),
-        use_container_width=True
-    )
+        weekly_date_map = weekly.set_index("Hafta")["Hafta Başlangıcı"]
+        campaign_row = weekly.set_index("Hafta")["Kampanya"]
 
-    st.subheader("Aylık Giriş / Çıkış Toplamları")
+        horizontal.columns = [
+            f"{week}\n{weekly_date_map.loc[week]}\n{campaign_row.loc[week] if campaign_row.loc[week] else ''}"
+            for week in horizontal.columns
+        ]
 
-    monthly_horizontal = monthly_report.set_index("Ay").T
-    st.dataframe(monthly_horizontal, use_container_width=True, height=360)
+        # Total Palet önceki haftaya göre artıyorsa o haftayı kritik kırmızı yap.
+        weekly_sorted = weekly.copy()
+        weekly_sorted["Total Palet Artış"] = weekly_sorted["Total Palet"].diff()
+        increased_weeks = weekly_sorted.loc[
+            weekly_sorted["Total Palet Artış"] > 0, "Hafta"
+        ].astype(str).tolist()
 
-    # Ekol Depo Data
-    ekol_weekly = None
-    ekol_capacity = None
+        # İlk 5 aydan sonraki haftaları kırmızı belirteçle işaretle.
+        weekly_horizon = weekly.copy()
+        weekly_horizon["_date"] = pd.to_datetime(weekly_horizon["Hafta Başlangıcı"], dayfirst=True, errors="coerce")
+        first_week_date = weekly_horizon["_date"].min()
+        horizon_limit = add_months(first_week_date, 5)
+        after_horizon_weeks = weekly_horizon.loc[
+            weekly_horizon["_date"] >= horizon_limit, "Hafta"
+        ].astype(str).tolist()
 
-    if ekol_file is not None:
-        st.subheader("Ekol Depo Data")
+        st.caption("Ekran performansı için tabloda ilk 5 ay gösterilir. Excel çıktısında tüm haftalar yer alır.")
 
-        try:
-            ekol_weekly, ekol_capacity = read_ekol_file(ekol_file)
+        display_cols = [
+            col for col in horizontal.columns
+            if str(col).split("\\n")[0] not in after_horizon_weeks
+        ]
+        horizontal_display = horizontal[display_cols] if display_cols else horizontal
 
-            if ekol_capacity is not None:
-                st.write("Ekol Kapasite Özeti")
-                st.dataframe(
-                    format_numeric_dataframe(ekol_capacity),
-                    use_container_width=True,
-                    height=220
-                )
+        st.dataframe(format_numeric_dataframe(horizontal_display), use_container_width=True, height=520)
 
-            if ekol_weekly is not None:
-                st.write("Ekol Haftalık Stok / Doluluk Tablosu")
-                st.dataframe(
-                    format_numeric_dataframe(ekol_weekly),
-                    use_container_width=True,
-                    height=420
-                )
+        with st.expander("Okunan Kampanya Takvimi"):
+            if campaign_df.empty:
+                st.warning("Kampanya takvimi okunamadı. Kampanya sheetinde kampanya adı, start ve end tarihleri olduğundan emin olun.")
+            else:
+                campaign_view = campaign_df.copy()
+                campaign_view["start"] = campaign_view["start"].dt.strftime("%d.%m.%Y")
+                campaign_view["end"] = campaign_view["end"].dt.strftime("%d.%m.%Y")
+                st.dataframe(campaign_view, use_container_width=True)
 
-            if ekol_weekly is None and ekol_capacity is None:
-                st.warning("Ekol dosyası okundu ancak uygun tablo bulunamadı.")
+    with tab_current:
+        st.subheader("Mevcut Hafta Palet Tablosu")
 
-        except Exception as e:
-            st.error(f"Ekol dosyası okunurken hata oluştu: {e}")
+        mevcut_hafta_report = pd.DataFrame({
+            "Kategori": ["Ana Ürün", "Mini Sample", "ADR", "Sarf", "Total"],
+            "Başlangıç Stok": [initial_ana, initial_mini, initial_adr, np.nan, np.nan],
+            "Palet İçi": [ana_palet_ici, mini_palet_ici, adr_palet_ici, np.nan, np.nan],
+            "Mevcut Hafta Palet": [
+                mevcut_ana_palet,
+                mevcut_mini_palet,
+                mevcut_adr_palet,
+                sarf_palet,
+                mevcut_total_palet
+            ]
+        })
 
+        for col in ["Başlangıç Stok", "Palet İçi", "Mevcut Hafta Palet"]:
+            mevcut_hafta_report[col] = pd.to_numeric(mevcut_hafta_report[col], errors="coerce").round(0)
+
+        st.dataframe(
+            mevcut_hafta_report.style.format({
+                "Başlangıç Stok": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
+                "Palet İçi": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
+                "Mevcut Hafta Palet": lambda x: "" if pd.isna(x) else f"{x:,.0f}",
+            }),
+            use_container_width=True
+        )
+
+    with tab_monthly:
+        st.subheader("Aylık Giriş / Çıkış Toplamları")
+
+        monthly_horizontal = monthly_report.set_index("Ay").T
+        st.dataframe(format_numeric_dataframe(monthly_horizontal), use_container_width=True, height=360)
+
+    with tab_ekol:
+        # Ekol Depo Data
+        ekol_weekly = None
+        ekol_capacity = None
+
+        if ekol_file is not None:
+            st.subheader("Ekol Depo Data")
+
+            try:
+                ekol_weekly, ekol_capacity = read_ekol_file(ekol_file)
+
+                if ekol_capacity is not None:
+                    st.write("Ekol Kapasite Özeti")
+                    st.dataframe(
+                        format_numeric_dataframe(ekol_capacity),
+                        use_container_width=True,
+                        height=220
+                    )
+
+                if ekol_weekly is not None:
+                    st.write("Ekol Haftalık Stok / Doluluk Tablosu")
+                    st.dataframe(
+                        format_numeric_dataframe(ekol_weekly),
+                        use_container_width=True,
+                        height=420
+                    )
+
+                if ekol_weekly is None and ekol_capacity is None:
+                    st.warning("Ekol dosyası okundu ancak uygun tablo bulunamadı.")
+
+            except Exception as e:
+                st.error(f"Ekol dosyası okunurken hata oluştu: {e}")
     # Depo ekranı için haftalık yatay operasyon tablosu
     depo_operasyon_cols = [
         "Hafta",
@@ -1615,7 +1644,7 @@ else:
 # RAPORU GEÇMİŞE KAYDET
 # ------------------------------------------------------------
 st.divider()
-st.subheader("Raporu Geçmişe Kaydet")
+st.subheader("💾 Raporu Geçmişe Kaydet")
 
 if "last_report_bytes" in st.session_state:
     report_save_name = st.text_input(
@@ -1649,7 +1678,7 @@ else:
 # GEÇMİŞ RAPORLAR
 # ------------------------------------------------------------
 st.divider()
-st.subheader("Geçmiş Raporlar")
+st.subheader("🗂️ Geçmiş Raporlar")
 
 history_files = list_saved_reports()
 
